@@ -229,6 +229,18 @@ void MapView::setGround(Tile &tile, Item &&ground, bool clearBorders)
     history.commit(std::move(action));
 }
 
+void MapView::replaceItemByServerId(Tile &tile, uint32_t oldServerId, uint32_t newServerId)
+{
+    Tile newTile = tile.deepCopy();
+
+    newTile.replaceItemByServerId(oldServerId, newServerId);
+
+    Action action(ActionType::SetTile);
+    action.addChange(SetTile(std::move(newTile)));
+
+    history.commit(std::move(action));
+}
+
 void MapView::addBorder(const Position &pos, uint32_t id, uint32_t zOrder)
 {
     if (!Items::items.validItemType(id) || pos.x < 0 || pos.y < 0)
@@ -366,18 +378,21 @@ void MapView::removeItems(const Tile &tile, std::function<bool(const Item &)> pr
 
 void MapView::removeItemsWithBorderize(const Tile &tile, std::function<bool(const Item &)> predicate)
 {
+
     Tile newTile = tile.deepCopy();
+    bool newTileHasGround = newTile.hasGround();
     if (newTile.removeItemsIf(predicate) > 0)
     {
+        newTileHasGround = newTile.hasGround();
         Action action(ActionType::ModifyTile);
         action.addChange(SetTile(std::move(newTile)));
 
         history.commit(std::move(action));
     }
 
-    if (Settings::AUTO_BORDER && !newTile.hasGround())
+    if (Settings::AUTO_BORDER)
     {
-        GroundBrush::borderize(*this, tile.position());
+        borderize(tile.position());
     }
 }
 
@@ -516,16 +531,44 @@ void MapView::deleteSelectedItems()
     }
 
     history.beginTransaction(TransactionType::RemoveMapItem);
-    for (const auto &pos : _selection)
+
+    if (Settings::AUTO_BORDER)
     {
-        const Tile &tile = *getTile(pos);
-        if (tile.allSelected())
+        std::unordered_set<Position> modifiedPositions;
+
+        for (const auto &pos : _selection)
         {
-            removeTile(tile.position());
+            const Tile &tile = *getTile(pos);
+            if (tile.allSelected())
+            {
+                removeTile(tile.position());
+            }
+            else
+            {
+                removeSelectedItems(tile);
+            }
+
+            modifiedPositions.emplace(pos);
         }
-        else
+
+        for (const auto &pos : modifiedPositions)
         {
-            removeSelectedItems(tile);
+            borderize(pos);
+        }
+    }
+    else
+    {
+        for (const auto &pos : _selection)
+        {
+            const Tile &tile = *getTile(pos);
+            if (tile.allSelected())
+            {
+                removeTile(tile.position());
+            }
+            else
+            {
+                removeSelectedItems(tile);
+            }
         }
     }
 
@@ -535,6 +578,12 @@ void MapView::deleteSelectedItems()
     history.endTransaction(TransactionType::RemoveMapItem);
     requestDraw();
     requestMinimapDraw();
+}
+
+void MapView::borderize(const Position &position)
+{
+    GroundBrush::borderize(*this, position);
+    MountainBrush::generalBorderize(*this, position);
 }
 
 void MapView::selectRegion(const Position &from, const Position &to)
@@ -1059,7 +1108,7 @@ void MapView::endDragging(VME::ModifierKeys modifiers)
                             }
                             default:
                                 // TODO Handle other cases
-                                NOT_IMPLEMENTED_ABORT();
+                                VME_LOG("Drag with this brush is not implemented.");
                         }
                     }
 
@@ -1131,9 +1180,7 @@ void MapView::selectTopThing(const Position &position, bool isNewSelection)
     Tile *tile = getTile(position);
     if (!tile)
     {
-        commitTransaction(TransactionType::Selection, [this] {
-            clearSelection();
-        });
+        commitTransaction(TransactionType::Selection, [this] { clearSelection(); });
         return;
     }
 
@@ -1158,7 +1205,8 @@ void MapView::selectTopThing(const Position &position, bool isNewSelection)
     {
         Item *topItem = tile->getTopItem();
 
-        commitTransaction(TransactionType::Selection, [this, position, topItem, isNewSelection] {
+        history.beginTransaction(TransactionType::Selection);
+        {
             if (isNewSelection)
             {
                 clearSelection();
@@ -1166,9 +1214,24 @@ void MapView::selectTopThing(const Position &position, bool isNewSelection)
 
             if (topItem)
             {
-                selectTopItem(position);
+                if (Settings::AUTO_BORDER)
+                {
+                    if (topItem->itemType->hasFlag(ItemTypeFlag::InMountainBrush | ItemTypeFlag::InBorderBrush))
+                    {
+                        selectTile(*tile);
+                    }
+                    else
+                    {
+                        selectTopItem(position);
+                    }
+                }
+                else
+                {
+                    selectTopItem(position);
+                }
             }
-        });
+        }
+        history.endTransaction(TransactionType::Selection);
     }
 }
 
@@ -1180,7 +1243,6 @@ void MapView::selectTopThing(const Position &position, bool isNewSelection)
 
 void MapView::mousePressEvent(VME::MouseEvent event)
 {
-    // VME_LOG_D("MapView::mousePressEvent");
     if (event.buttons() & VME::MouseButtons::LeftButton)
     {
         Position pos = event.pos().toPos(*this);
@@ -1757,9 +1819,7 @@ void MapView::perfTest()
 
     VME_LOG("fillRegion finished in " << start.elapsedMillis() << " ms.");
     TimePoint start2;
-    waitForDraw([start2] {
-        VME_LOG("draw finished in " << start2.elapsedMillis() << " ms.");
-    });
+    waitForDraw([start2] { VME_LOG("draw finished in " << start2.elapsedMillis() << " ms."); });
 
     requestDraw();
 }

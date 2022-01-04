@@ -100,7 +100,7 @@ GroundBrush *Brush::addGroundBrush(std::unique_ptr<GroundBrush> &&brush)
     // Store brush in the item type
     for (uint32_t serverId : groundBrush->serverIds())
     {
-        Items::items.getItemTypeByServerId(serverId)->brush = groundBrush;
+        Items::items.getItemTypeByServerId(serverId)->addBrush(groundBrush);
     }
 
     return groundBrush;
@@ -147,7 +147,9 @@ BorderBrush *Brush::addBorderBrush(BorderBrush &&brush)
     // Store brush in the item type
     for (uint32_t serverId : borderBrush->serverIds())
     {
-        Items::items.getItemTypeByServerId(serverId)->brush = borderBrush;
+        ItemType *itemType = Items::items.getItemTypeByServerId(serverId);
+
+        itemType->addBrush(borderBrush);
     }
 
     return borderBrush;
@@ -182,7 +184,7 @@ MountainBrush *Brush::addMountainBrush(std::unique_ptr<MountainBrush> &&brush)
     MountainBrush *mountainBrush = static_cast<MountainBrush *>(result.first.value().get());
     for (uint32_t id : mountainBrush->serverIds())
     {
-        Items::items.getItemTypeByServerId(id)->brush = mountainBrush;
+        Items::items.getItemTypeByServerId(id)->addBrush(mountainBrush);
     }
 
     return mountainBrush;
@@ -227,7 +229,7 @@ DoodadBrush *Brush::addDoodadBrush(std::unique_ptr<DoodadBrush> &&brush)
     DoodadBrush *doodadBrush = static_cast<DoodadBrush *>(result.first.value().get());
     for (uint32_t id : doodadBrush->serverIds())
     {
-        Items::items.getItemTypeByServerId(id)->brush = doodadBrush;
+        Items::items.getItemTypeByServerId(id)->addBrush(doodadBrush);
     }
 
     return doodadBrush;
@@ -428,6 +430,11 @@ void Brush::updatePreview(int variation)
     // Empty
 }
 
+void Brush::applyWithoutBorderize(MapView &mapView, const Position &position)
+{
+    apply(mapView, position);
+}
+
 int Brush::variationCount() const
 {
     return 1;
@@ -437,8 +444,8 @@ GroundBrush *Brush::getGroundBrush(const Tile &tile)
 {
     if (tile.hasGround())
     {
-        Brush *brush = tile.ground()->itemType->brush;
-        return (brush && brush->type() == BrushType::Ground) ? static_cast<GroundBrush *>(brush) : nullptr;
+        Brush *brush = tile.ground()->itemType->getBrush(BrushType::Ground);
+        return brush ? static_cast<GroundBrush *>(brush) : nullptr;
     }
     else
     {
@@ -451,7 +458,7 @@ BorderBrush *Brush::getBorderBrush(const Tile &tile)
     const Item *prev = nullptr;
     for (const auto &item : tile.items())
     {
-        if (!item->isBorder())
+        if (!(item->isBorder()))
         {
             break;
         }
@@ -461,11 +468,17 @@ BorderBrush *Brush::getBorderBrush(const Tile &tile)
 
     if (prev && prev->isBorder())
     {
-        Brush *brush = prev->itemType->brush;
-        if (brush && brush->type() == BrushType::Border)
+        Brush *brush = prev->itemType->getBrush(BrushType::Border);
+        if (brush)
         {
             return static_cast<BorderBrush *>(brush);
         }
+    }
+
+    if (tile.hasGround())
+    {
+        Brush *brush = tile.ground()->itemType->getBrush(BrushType::Border);
+        return brush ? static_cast<BorderBrush *>(brush) : nullptr;
     }
 
     return nullptr;
@@ -475,8 +488,8 @@ DoodadBrush *Brush::getDoodadBrush(const Tile &tile)
 {
     for (const auto &item : tile.items())
     {
-        Brush *brush = item->itemType->brush;
-        if (brush && brush->type() == BrushType::Doodad)
+        Brush *brush = item->itemType->getBrush(BrushType::Doodad);
+        if (brush)
         {
             return static_cast<DoodadBrush *>(brush);
         }
@@ -489,8 +502,8 @@ WallBrush *Brush::getWallBrush(const Tile &tile)
 {
     for (const auto &item : tile.items())
     {
-        Brush *brush = item->itemType->brush;
-        if (brush && brush->type() == BrushType::Wall)
+        Brush *brush = item->itemType->getBrush(BrushType::Wall);
+        if (brush)
         {
             return static_cast<WallBrush *>(brush);
         }
@@ -515,8 +528,8 @@ MountainBrush *Brush::getMountainBrush(const Tile &tile)
 {
     for (const auto &item : tile.items())
     {
-        Brush *brush = item->itemType->brush;
-        if (brush && brush->type() == BrushType::Mountain)
+        Brush *brush = item->itemType->getBrush(BrushType::Mountain);
+        if (brush)
         {
             return static_cast<MountainBrush *>(brush);
         }
@@ -632,22 +645,12 @@ int BorderNeighborMap::index(int x, int y) const
 
 void BorderData::setCenterGroundId(const std::string &id)
 {
-    centerGroundId = id;
+    _centerBrush.emplace(Brush::LazyGround(id));
 }
 
-Brush *BorderData::getCenterBrush() const
+GroundBrush *BorderData::centerBrush() const
 {
-    if (_centerBrush)
-        return _centerBrush;
-
-    if (centerGroundId)
-    {
-        _centerBrush = Brush::getGroundBrush(*centerGroundId);
-        centerGroundId.reset();
-        return _centerBrush;
-    }
-
-    return nullptr;
+    return _centerBrush ? _centerBrush->value() : nullptr;
 }
 
 BorderType BorderData::getBorderType(uint32_t serverId) const
@@ -660,8 +663,12 @@ BorderType BorderData::getBorderType(uint32_t serverId) const
         }
     }
 
-    auto centerBrush = getCenterBrush();
-    if (centerBrush && centerBrush->erasesItem(serverId))
+    if (extraIds && extraIds->contains(serverId))
+    {
+        return extraIds->at(serverId);
+    }
+
+    if (_centerBrush && _centerBrush->value()->erasesItem(serverId))
     {
         return BorderType::Center;
     }
@@ -687,8 +694,7 @@ bool BorderData::is(uint32_t serverId, BorderType borderType) const
 {
     if (borderType == BorderType::Center)
     {
-        auto centerBrush = getCenterBrush();
-        return centerBrush && centerBrush->erasesItem(serverId);
+        return _centerBrush && _centerBrush->value()->erasesItem(serverId);
     }
 
     auto borderItemId = getServerId(borderType);
@@ -731,4 +737,34 @@ std::unordered_set<Position> CircularBrushShape::getRelativePositions() const no
 {
     // TODO implement other sizes
     return Size3x3;
+}
+
+Brush::LazyGround::LazyGround(GroundBrush *brush)
+    : LazyObject(brush) {}
+
+Brush::LazyGround::LazyGround(std::string groundBrushId)
+    : LazyObject([groundBrushId]() {
+          GroundBrush *brush = Brush::getGroundBrush(groundBrushId);
+          if (!brush)
+          {
+              ABORT_PROGRAM(std::format("Attempted to retrieve a GroundBrush with id '{}' from a Brush::LazyGround, but the brush did not exist.", groundBrushId));
+          }
+
+          return brush;
+      }) {}
+
+BorderData::BorderData(std::array<uint32_t, 12> borderIds)
+    : borderIds(borderIds) {}
+
+BorderData::BorderData(std::array<uint32_t, 12> borderIds, GroundBrush *centerBrush)
+    : borderIds(borderIds), _centerBrush(std::make_optional<Brush::LazyGround>(centerBrush)) {}
+
+void BorderData::setExtraBorderIds(vme_unordered_map<uint32_t, BorderType> &&extraIds)
+{
+    this->extraIds = std::make_unique<vme_unordered_map<uint32_t, BorderType>>(std::move(extraIds));
+}
+
+const vme_unordered_map<uint32_t, BorderType> *BorderData::getExtraBorderIds() const
+{
+    return extraIds ? extraIds.get() : nullptr;
 }

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <string>
 #include <type_traits>
 
 #include "const.h"
@@ -74,7 +75,7 @@ class TileCovers
     static bool contains(TileCover source, TileCover test) noexcept;
     static void clearCoverFlags(TileCover &cover, TileCover flags);
     static void eraseSide(TileCover &cover, TileCover side, TileCover preferredDiagonal = TILE_COVER_NONE);
-    static TileCover mirrorNorth(TileCover tileCover);
+    static TileCover mirrorNorth(TileCover tileCover, bool corner = true);
     static TileCover mirrorEast(TileCover cover);
     static TileCover mirrorEast(TileCover source, TileCover cover);
     static TileCover mirrorSouth(TileCover tileCover);
@@ -88,9 +89,15 @@ class TileCovers
         return bits && !(bits & (bits - 1));
     }
 
+    static TileCover fromBorderType(BorderType borderType);
+
     static bool hasFullSide(TileCover cover, TileCover side);
     static TileCover getFull(TileCover side);
     static TileCover addNonMasked(TileCover current, TileCover committed, TileCover mask);
+
+    static TileCover mirrorXY(TileCover cover);
+
+    static std::string show(TileCover cover);
 
     static constexpr TileCover None = TILE_COVER_NONE;
     static constexpr TileCover Full = TILE_COVER_FULL;
@@ -113,6 +120,22 @@ class TileCovers
     static constexpr TileCover FullSouth = TILE_COVER_FULL | TILE_COVER_SOUTH | TILE_COVER_SOUTH_EAST | TILE_COVER_SOUTH_WEST;
     static constexpr TileCover FullWest = TILE_COVER_FULL | TILE_COVER_WEST | TILE_COVER_SOUTH_WEST | TILE_COVER_NORTH_WEST;
     static constexpr TileCover Diagonals = TILE_COVER_NORTH_WEST | TILE_COVER_NORTH_EAST | TILE_COVER_SOUTH_EAST | TILE_COVER_SOUTH_WEST;
+
+    static constexpr std::array<TileCover, 14> borderTypeToTileCover = {
+        TILE_COVER_NONE,
+        TILE_COVER_NORTH,
+        TILE_COVER_EAST,
+        TILE_COVER_SOUTH,
+        TILE_COVER_WEST,
+        TILE_COVER_NORTH_WEST_CORNER,
+        TILE_COVER_NORTH_EAST_CORNER,
+        TILE_COVER_SOUTH_EAST_CORNER,
+        TILE_COVER_SOUTH_WEST_CORNER,
+        TILE_COVER_NORTH_WEST,
+        TILE_COVER_NORTH_EAST,
+        TILE_COVER_SOUTH_EAST,
+        TILE_COVER_SOUTH_WEST,
+        TILE_COVER_FULL};
 };
 
 namespace TileCoverShortHands

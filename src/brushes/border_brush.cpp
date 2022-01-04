@@ -122,20 +122,17 @@ bool isTop(TileQuadrant quadrant);
 bool isLeft(TileQuadrant quadrant);
 bool isRight(TileQuadrant quadrant);
 
-BorderBrush::BorderBrush(std::string id, const std::string &name, std::array<uint32_t, 12> borderIds, Brush *centerBrush)
+BorderBrush::BorderBrush(std::string id, const std::string &name, std::array<uint32_t, 12> borderIds, GroundBrush *centerBrush)
     : Brush(name), id(id), borderData(borderIds, centerBrush)
 {
     initialize();
 }
 
-BorderBrush::BorderBrush(std::string id, const std::string &name, std::array<uint32_t, 12> borderIds, GroundBrush *centerBrush)
-    : BorderBrush(id, name, borderIds, static_cast<Brush *>(centerBrush)) {}
-
-BorderBrush::BorderBrush(std::string id, const std::string &name, std::array<uint32_t, 12> borderIds, RawBrush *centerBrush)
-    : BorderBrush(id, name, borderIds, static_cast<Brush *>(centerBrush)) {}
-
 BorderBrush::BorderBrush(std::string id, const std::string &name, std::array<uint32_t, 12> borderIds)
-    : BorderBrush(id, name, borderIds, static_cast<Brush *>(nullptr)) {}
+    : Brush(name), id(id), borderData(borderIds)
+{
+    initialize();
+}
 
 void BorderBrush::initialize()
 {
@@ -144,9 +141,18 @@ void BorderBrush::initialize()
         sortedServerIds.emplace_back(id);
     }
 
+    const auto &extraIds = borderData.getExtraBorderIds();
+    if (extraIds)
+    {
+        for (const auto &[key, val] : *extraIds)
+        {
+            sortedServerIds.emplace_back(key);
+        }
+    }
+
     std::sort(sortedServerIds.begin(), sortedServerIds.end());
 
-    auto centerBrush = borderData.getCenterBrush();
+    auto centerBrush = borderData.centerBrush();
     if (centerBrush && centerBrush->type() == BrushType::Ground)
     {
         zOrder = static_cast<GroundBrush *>(centerBrush)->zOrder();
@@ -597,7 +603,7 @@ void BorderBrush::apply(MapView &mapView, const Position &position, BorderType b
 {
     if (borderType == BorderType::Center)
     {
-        Brush *centerBrush = borderData.getCenterBrush();
+        Brush *centerBrush = borderData.centerBrush();
         if (centerBrush)
         {
             centerBrush->apply(mapView, position);
@@ -652,7 +658,7 @@ TileQuadrant BorderBrush::getNeighborQuadrant(int dx, int dy)
 
 bool BorderBrush::includes(uint32_t serverId) const
 {
-    auto centerBrush = borderData.getCenterBrush();
+    auto centerBrush = borderData.centerBrush();
     return hasBorder(serverId) || (centerBrush && centerBrush->erasesItem(serverId));
 }
 
@@ -707,9 +713,9 @@ std::optional<uint32_t> BorderBrush::getServerId(BorderType borderType) const no
     return borderData.getServerId(borderType);
 }
 
-Brush *BorderBrush::centerBrush() const
+GroundBrush *BorderBrush::centerBrush() const
 {
-    return borderData.getCenterBrush();
+    return borderData.centerBrush();
 }
 
 BorderType BorderBrush::getBorderType(uint32_t serverId) const
@@ -720,7 +726,7 @@ BorderType BorderBrush::getBorderType(uint32_t serverId) const
 TileCover BorderBrush::getTileCover(uint32_t serverId) const
 {
     BorderType borderType = getBorderType(serverId);
-    return BorderData::borderTypeToTileCover[to_underlying(borderType)];
+    return TileCovers::fromBorderType(borderType);
 }
 
 bool isRight(TileQuadrant quadrant)
@@ -760,7 +766,7 @@ uint32_t BorderBrush::preferredZOrder() const
 {
     if (zOrder == std::numeric_limits<uint32_t>::max())
     {
-        auto centerBrush = borderData.getCenterBrush();
+        auto centerBrush = borderData.centerBrush();
         if (centerBrush && centerBrush->type() == BrushType::Ground)
         {
             zOrder = static_cast<GroundBrush *>(centerBrush)->zOrder();
@@ -772,4 +778,71 @@ uint32_t BorderBrush::preferredZOrder() const
     }
 
     return zOrder;
+}
+
+BorderStackBehavior BorderBrush::stackBehavior() const noexcept
+{
+    return _stackBehavior;
+}
+
+void BorderBrush::setStackBehavior(BorderStackBehavior behavior) noexcept
+{
+    _stackBehavior = behavior;
+}
+
+bool BorderRule::Condition::check(const TileBorderBlock &block) const
+{
+    for (const auto &cover : block.covers)
+    {
+        if (cover.brush->brushId() == borderId)
+        {
+            if (this->edges)
+            {
+                return TileCovers::contains(cover.cover, *this->edges);
+            }
+            else
+            {
+                return cover.cover != TILE_COVER_NONE;
+            }
+        }
+    }
+
+    return false;
+}
+
+void BorderRule::apply(MapView &mapView, BorderBrush *brush, const Position &position) const
+{
+    Tile &tile = mapView.getOrCreateTile(position);
+    if (action == "setFull")
+    {
+        mapView.removeItems(tile, [brush](const Item &item) { return brush->erasesItem(item.serverId()); });
+        if (brush->centerBrush())
+        {
+            brush->centerBrush()->applyWithoutBorderize(mapView, position);
+        }
+    }
+}
+
+std::optional<TileCover> WhenBorderRule::check(const TileBorderBlock &block) const
+{
+    for (const auto &cover : block.covers)
+    {
+        if (cover.brush->brushId() == borderId)
+        {
+            return cover.cover;
+        }
+    }
+
+    return std::nullopt;
+}
+
+void ReplaceAction::apply(MapView &mapView, const Position &position, uint32_t oldServerId)
+{
+    Tile &tile = mapView.getOrCreateTile(position);
+    mapView.replaceItemByServerId(tile, oldServerId, serverId);
+}
+
+void SetFullAction::apply(MapView &mapView, const Position &position, GroundBrush *groundBrush)
+{
+    groundBrush->applyWithoutBorderize(mapView, position);
 }

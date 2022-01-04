@@ -16,7 +16,113 @@ class Map;
 class GroundBrush;
 class RawBrush;
 class GeneralBorderBrush;
+struct TileBorderBlock;
+
 enum class BorderBrushVariationType;
+
+enum class BorderStackBehavior
+{
+    Default,
+    Clear,
+    FullGround,
+};
+
+/*
+{
+    "whenBorder": {
+        "borderId": "sea_border",
+        "case": {
+            "selfEdge": "s",
+            "borderEdge": "csw",
+            "actions": [
+                {
+                    "type": "replace",
+                    "target": "other",
+                    "value": 4657
+                }
+            ]
+        }
+    }
+}
+*/
+
+struct BorderRuleAction
+{
+    enum class Type
+    {
+        SetFull,
+        Replace
+    };
+
+    BorderRuleAction(Type type)
+        : type(type) {}
+
+    Type type;
+};
+
+struct RuleAction
+{
+    virtual void apply(MapView &mapView, BorderBrush *brush, const Position &position);
+};
+
+struct SetFullAction : public BorderRuleAction
+{
+    SetFullAction(bool setSelf)
+        : BorderRuleAction(Type::SetFull), setSelf(setSelf) {}
+
+    SetFullAction()
+        : BorderRuleAction(Type::SetFull) {}
+
+    void apply(MapView &mapView, const Position &position, GroundBrush *groundBrush);
+
+    bool setSelf = true;
+};
+
+struct ReplaceAction : public BorderRuleAction
+{
+    ReplaceAction(bool replaceSelf, uint32_t serverId)
+        : BorderRuleAction(Type::Replace), replaceSelf(replaceSelf), serverId(serverId) {}
+
+    ReplaceAction()
+        : BorderRuleAction(Type::Replace) {}
+
+    void apply(MapView &mapView, const Position &position, uint32_t oldServerId);
+
+    bool replaceSelf = true;
+    uint32_t serverId;
+};
+
+struct WhenBorderRule
+{
+    struct Case
+    {
+        BorderType selfEdge;
+        BorderType borderEdge;
+        // std::vector<std::unique_ptr<RuleAction *>> actions;
+        std::unique_ptr<BorderRuleAction> action;
+    };
+
+    std::optional<TileCover> check(const TileBorderBlock &block) const;
+
+    std::string borderId;
+    std::vector<Case> cases;
+    std::vector<std::unique_ptr<BorderRuleAction>> actions;
+};
+
+struct BorderRule
+{
+    struct Condition
+    {
+        bool check(const TileBorderBlock &block) const;
+        std::string borderId;
+        std::optional<TileCover> edges;
+    };
+
+    void apply(MapView &mapView, BorderBrush *brush, const Position &position) const;
+
+    std::vector<Condition> conditions;
+    std::string action;
+};
 
 class BorderBrush final : public Brush
 {
@@ -30,11 +136,14 @@ class BorderBrush final : public Brush
     void apply(MapView &mapView, const Position &position) override;
     void erase(MapView &mapView, const Position &position) override;
 
-    void quadrantChanged(MapView &mapView, const Position &position, TileQuadrant prevQuadrant, TileQuadrant currQuadrant);
     bool erasesItem(uint32_t serverId) const override;
     BrushType type() const override;
     const std::string getDisplayId() const override;
     std::vector<ThingDrawInfo> getPreviewTextureInfo(int variation) const override;
+
+    void apply(MapView &mapView, const Position &position, BorderType borderType);
+
+    void quadrantChanged(MapView &mapView, const Position &position, TileQuadrant prevQuadrant, TileQuadrant currQuadrant);
 
     uint32_t iconServerId() const;
 
@@ -53,7 +162,7 @@ class BorderBrush final : public Brush
 
     std::optional<uint32_t> getServerId(BorderType borderType) const noexcept;
 
-    Brush *centerBrush() const;
+    GroundBrush *centerBrush() const;
 
     BorderType getBorderType(uint32_t serverId) const;
     TileCover getTileCover(uint32_t serverId) const;
@@ -62,13 +171,17 @@ class BorderBrush final : public Brush
 
     static void setBrushVariation(BorderBrushVariationType brushVariationType);
 
+    inline const BorderData &getBorderData() const noexcept;
+    inline BorderData &getBorderData() noexcept;
+
+    BorderStackBehavior stackBehavior() const noexcept;
+    void setStackBehavior(BorderStackBehavior behavior) noexcept;
+
+    std::vector<WhenBorderRule> rules;
+
   private:
     friend class GeneralBorderBrush;
     friend class DetailedBorderBrush;
-
-    BorderBrush(std::string id, const std::string &name, std::array<uint32_t, 12> borderIds, Brush *centerBrush);
-
-    void apply(MapView &mapView, const Position &position, BorderType borderType);
 
     void quadrantChanged(MapView &mapView, const Position &position, BorderNeighborMap &neighbors, TileQuadrant prevQuadrant, TileQuadrant currQuadrant);
 
@@ -100,20 +213,15 @@ class BorderBrush final : public Brush
 
     static BorderBrushVariation *brushVariation;
 
-    /*
-    None = 0,
-    North = 1,
-    East = 2,
-    South = 3,
-    West = 4,
-    NorthWestCorner = 5,
-    NorthEastCorner = 6,
-    SouthEastCorner = 7,
-    SouthWestCorner = 8,
-    NorthWestDiagonal = 9,
-    NorthEastDiagonal = 10,
-    SouthEastDiagonal = 11,
-    SouthWestDiagonal = 12,
-    Center = 13
-*/
+    BorderStackBehavior _stackBehavior = BorderStackBehavior::Default;
 };
+
+inline const BorderData &BorderBrush::getBorderData() const noexcept
+{
+    return borderData;
+}
+
+inline BorderData &BorderBrush::getBorderData() noexcept
+{
+    return borderData;
+}

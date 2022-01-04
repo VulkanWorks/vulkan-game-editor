@@ -1,5 +1,7 @@
 #include "tile_cover.h"
 
+#include <sstream>
+
 void TileCovers::clearCoverFlags(TileCover &cover, TileCover flags)
 {
     cover &= ~flags;
@@ -110,10 +112,15 @@ TileCover TileCovers::mergeTileCover(TileCover a, TileCover b)
 
 TileCover TileCovers::unifyTileCover(TileCover cover, TileQuadrant quadrant, TileCover preferredDiagonal)
 {
-    DEBUG_ASSERT((preferredDiagonal == None) || exactlyOneSet(preferredDiagonal & Diagonals), "Preferred diagonal must be None or have exactly one diagonal set.");
+    // DEBUG_ASSERT((preferredDiagonal == None) || exactlyOneSet(preferredDiagonal & Diagonals), "Preferred diagonal must be None or have exactly one diagonal set.");
 
     if (cover & Full)
         return Full;
+
+    if (exactlyOneSet(cover))
+    {
+        return cover;
+    }
 
     bool north = cover & FullNorth;
     bool east = cover & FullEast;
@@ -362,7 +369,7 @@ TileCover TileCovers::mirrorWest(TileCover cover)
     return result;
 }
 
-TileCover TileCovers::mirrorNorth(TileCover tileCover)
+TileCover TileCovers::mirrorNorth(TileCover tileCover, bool corner)
 {
     if (tileCover & FullNorth)
     {
@@ -372,11 +379,11 @@ TileCover TileCovers::mirrorNorth(TileCover tileCover)
     TileCover result = None;
     if (tileCover & (East | NorthEastCorner | SouthEast))
     {
-        result |= SouthEastCorner;
+        result |= corner ? SouthEastCorner : NorthEast;
     }
     if (tileCover & (West | NorthWestCorner | SouthWest))
     {
-        result |= SouthWestCorner;
+        result |= corner ? SouthWestCorner : NorthWest;
     }
 
     return result;
@@ -420,6 +427,45 @@ bool TileCovers::hasFullSide(TileCover cover, TileCover side)
     }
 }
 
+TileCover TileCovers::mirrorXY(TileCover cover)
+{
+    DEBUG_ASSERT(exactlyOneSet(cover), "Must be exactly one set.");
+
+    switch (cover)
+    {
+        case None:
+            return None;
+        case Full:
+            return Full;
+        case North:
+            return South;
+        case East:
+            return West;
+        case South:
+            return North;
+        case West:
+            return East;
+        case NorthWest:
+            return SouthEastCorner;
+        case NorthEast:
+            return SouthWestCorner;
+        case SouthWest:
+            return NorthEastCorner;
+        case SouthEast:
+            return NorthWestCorner;
+        case NorthWestCorner:
+            return SouthEast;
+        case NorthEastCorner:
+            return SouthWest;
+        case SouthWestCorner:
+            return NorthEast;
+        case SouthEastCorner:
+            return NorthWest;
+        default:
+            ABORT_PROGRAM("Should never happen");
+    }
+}
+
 TileCover TileCovers::getFull(TileCover side)
 {
     DEBUG_ASSERT(side & (North | East | South | West), "Invalid side");
@@ -433,6 +479,8 @@ TileCover TileCovers::getFull(TileCover side)
             return FullSouth;
         case West:
             return FullWest;
+        default:
+            ABORT_PROGRAM("Should never happen");
     }
 }
 
@@ -440,4 +488,87 @@ TileCover TileCovers::addNonMasked(TileCover current, TileCover committed, TileC
 {
     auto m = current & (~mask);
     return committed | m;
+}
+
+TileCover TileCovers::fromBorderType(BorderType borderType)
+{
+    return borderTypeToTileCover[to_underlying(borderType)];
+}
+
+std::string TileCovers::show(TileCover cover)
+{
+    std::ostringstream s;
+
+    if (cover & None)
+    {
+        s << "None"
+          << " | ";
+    }
+    if (cover & Full)
+    {
+        s << "Full"
+          << " | ";
+    }
+    if (cover & North)
+    {
+        s << "North"
+          << " | ";
+    }
+    if (cover & East)
+    {
+        s << "East"
+          << " | ";
+    }
+    if (cover & South)
+    {
+        s << "South"
+          << " | ";
+    }
+    if (cover & West)
+    {
+        s << "West"
+          << " | ";
+    }
+    if (cover & NorthWest)
+    {
+        s << "NorthWest"
+          << " | ";
+    }
+    if (cover & NorthEast)
+    {
+        s << "NorthEast"
+          << " | ";
+    }
+    if (cover & SouthWest)
+    {
+        s << "SouthWest"
+          << " | ";
+    }
+    if (cover & SouthEast)
+    {
+        s << "SouthEast"
+          << " | ";
+    }
+    if (cover & NorthWestCorner)
+    {
+        s << "NorthWestCorner"
+          << " | ";
+    }
+    if (cover & NorthEastCorner)
+    {
+        s << "NorthEastCorner"
+          << " | ";
+    }
+    if (cover & SouthWestCorner)
+    {
+        s << "SouthWestCorner"
+          << " | ";
+    }
+    if (cover & SouthEastCorner)
+    {
+        s << "SouthEastCorner"
+          << " | ";
+    }
+
+    return s.str();
 }
